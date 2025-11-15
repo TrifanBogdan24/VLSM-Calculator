@@ -1,6 +1,7 @@
-// src/main.ts - UI for IP Subnet Calculator with Rust backend integration
+// src/main.ts - IP Subnet Calculator with VLSM Rust backend integration
 
 import { invoke } from "@tauri-apps/api/core";
+
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div style="font-family: sans-serif; padding: 2rem;">
@@ -24,10 +25,6 @@ applyBtn.addEventListener("click", () => {
   const ip = (document.getElementById("ip") as HTMLInputElement).value;
   const mask = parseInt((document.getElementById("mask") as HTMLInputElement).value);
   const networks = parseInt((document.getElementById("networks") as HTMLInputElement).value);
-
-  console.log("IP:", ip);
-  console.log("Mask:", mask);
-  console.log("Networks:", networks);
 
   const container = document.createElement("div");
   container.style.marginTop = "1rem";
@@ -67,39 +64,86 @@ applyBtn.addEventListener("click", () => {
 
   container.appendChild(table);
 
-  // Remove old table if exists
   const existing = document.getElementById("results-table");
   if (existing) existing.remove();
 
   container.id = "results-table";
   document.body.appendChild(container);
 
-  // Add "Calculate subnets" button if networks > 0
   if (networks > 0) {
     const calcBtnWrapper = document.createElement("div");
     calcBtnWrapper.style.textAlign = "center";
     calcBtnWrapper.style.marginTop = "1rem";
 
     const calcBtn = document.createElement("button");
-    calcBtn.textContent = "Calculate subnets";
+    calcBtn.textContent = "Generate";
     calcBtn.id = "calculate-subnets-btn";
 
     calcBtn.addEventListener("click", async () => {
-      const hosts: number[] = [];
-      const gateways: boolean[] = [];
-
-      document.querySelectorAll("table tbody tr").forEach((row) => {
+      // Gather input
+      const networkInfos = Array.from(document.querySelectorAll("table tbody tr")).map((row) => {
         const inputs = row.querySelectorAll("input");
-        hosts.push(parseInt((inputs[1] as HTMLInputElement).value) || 0);
-        gateways.push((inputs[2] as HTMLInputElement).checked);
+        return {
+          name: (inputs[0] as HTMLInputElement).value,
+          num_hosts: parseInt((inputs[1] as HTMLInputElement).value) || 0,
+          contains_default_gateway: (inputs[2] as HTMLInputElement).checked,
+        };
       });
 
       try {
-        const result: string[] = await invoke("calculate_subnets", { ip, mask, networks, hosts, gateways });
-        console.log("Subnet results:", result);
-        alert(result.join("\n")); // or render in table
+        // Call Rust VLSM calculator
+        // Returns array of structs with subnet info
+        const result: Array<any> = await invoke("calculate_subnets", {
+          ip,
+          prefix: mask,
+          networks: networkInfos
+        });
+
+        // Render result in formatted table
+        const outputDivId = 'subnet-results';
+        let outputDiv = document.getElementById(outputDivId);
+        if (outputDiv) outputDiv.remove();
+
+        outputDiv = document.createElement('div');
+        outputDiv.id = outputDivId;
+        outputDiv.style.marginTop = '1rem';
+
+        const resultTable = document.createElement('table');
+        resultTable.style.width = '100%';
+        resultTable.style.borderCollapse = 'collapse';
+        resultTable.innerHTML = `
+          <thead>
+            <tr>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">Network Name</th>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">Prefix</th>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">Decimal Mask</th>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">IP Network</th>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">Assignable IPs</th>
+              <th style="border-bottom:1px solid #ccc;padding:4px;">IP Broadcast</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+
+        const tbody = resultTable.querySelector('tbody')!;
+        result.forEach((r) => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td style='padding:4px;'>${r.network_name}</td>
+            <td style='padding:4px;'>/${r.prefix_mask}</td>
+            <td style='padding:4px;'>${r.decimal_mask}</td>
+            <td style='padding:4px;'>${r.ip_network}</td>
+            <td style='padding:4px;'>${r.assignable_ips}</td>
+            <td style='padding:4px;'>${r.ip_broadcast}</td>
+          `;
+          tbody.appendChild(row);
+        });
+
+        outputDiv.appendChild(resultTable);
+        document.body.appendChild(outputDiv);
+
       } catch (e) {
-        console.error("Error calling Rust command:", e);
+        console.error("Error calling Rust subnet calculator:", e);
       }
     });
 
